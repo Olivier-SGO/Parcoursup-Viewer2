@@ -245,17 +245,258 @@ function copyShareLink() {
 
 // ── Synchronisation cloud ─────────────────────────────────────────────────────
 //
-// Supabase est mis en pause (voir CLAUDE.md). La synchro se fait par fichier JSON
-// exporté/importé dans un dossier synchronisé (iCloud Drive, Dropbox, etc.).
+// La synchro se fait par fichier JSON dans un dossier synchronisé
+// (iCloud Drive, Dropbox, OneDrive, etc.) grâce à la File System Access API.
+// Chaque modification est auto-sauvegardée dans le fichier lié.
 //
 // Fragment URL de partage :
 //   #BASE64  → snapshot figé (lecture seule, fonctionne sans compte)
 
-// ── Supabase (désactivé par défaut) ────────────────────────────────────────────
-// Pour réactiver Supabase, passez SUPABASE_ENABLED à true et remplissez les clés.
+// ── File System Access (synchronisation fichier) ───────────────────────────────
+
+const FILE_SYNC_DB_NAME = 'parcoursup_file_sync';
+const FILE_SYNC_STORE = 'handles';
+const FILE_SYNC_KEY = 'activeFile';
+
+let _fileSyncHandle = null;
+let _fileSyncPath = null;
+let _fileSyncWriteTimer = null;
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+async function _openFileSyncDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(FILE_SYNC_DB_NAME, 1);
+        req.onupgradeneeded = (e) => {
+            e.target.result.createObjectStore(FILE_SYNC_STORE);
+        };
+        req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror = (e) => reject(e);
+    });
+}
+
+async function _saveFileHandleToDB(handle) {
+    const db = await _openFileSyncDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(FILE_SYNC_STORE, 'readwrite');
+        tx.objectStore(FILE_SYNC_STORE).put(handle, FILE_SYNC_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e);
+    });
+}
+
+async function _loadFileHandleFromDB() {
+    const db = await _openFileSyncDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(FILE_SYNC_STORE, 'readonly');
+        const req = tx.objectStore(FILE_SYNC_STORE).get(FILE_SYNC_KEY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = (e) => reject(e);
+    });
+}
+
+async function _removeFileHandleFromDB() {
+    const db = await _openFileSyncDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(FILE_SYNC_STORE, 'readwrite');
+        tx.objectStore(FILE_SYNC_STORE).delete(FILE_SYNC_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e);
+    });
+}
+
+// ── Activation / désactivation ──────────────────────────────────────────────────
+
+async function activateFileSync() {
+    if (!window.showOpenFilePicker) {
+        alert('La sélection de fichier automatique n\'est pas supportée par ce navigateur. Utilisez Chrome, Edge ou Safari macOS récent, ou restez en mode local avec export/import manuel.');
+        return;
+    }
+    try {
+        const [handle] = await window.showOpenFilePicker({
+            types: [{ description: 'Sauvegarde Parcoursup', accept: { 'application/json': ['.json'] } }],
+            excludeAcceptAllOption: false
+        });
+        const file = await handle.getFile();
+        const text = await file.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { alert('Fichier JSON invalide.'); return; }
+        if (!data.snapshot && !data.text) { alert('Ce fichier ne semble pas être une sauvegarde Parcoursup.'); return; }
+
+        // Charger les données
+        storageSave(data);
+        resumeSession();
+
+        // Persister le handle
+        await _saveFileHandleToDB(handle);
+        _fileSyncHandle = handle;
+        _fileSyncPath = file.name;
+
+        _updateSyncUI();
+        _updateExportStatus();
+    } catch (e) {
+        if (e.name !== 'AbortError') {
+            console.error('[fileSync]', e);
+            alert('Erreur : ' + (e.message || e));
+        }
+    }
+}
+
+function deactivateFileSync() {
+    _fileSyncHandle = null;
+    _fileSyncPath = null;
+    _removeFileHandleFromDB().catch(() => {});
+    _stopPolling();
+    _updateSyncUI();
+}
+
+// ── Lecture / écriture automatique ──────────────────────────────────────────────
+
+async function _readFileSync() {
+    if (!_fileSyncHandle) return null;
+    try {
+        const file = await _fileSyncHandle.getFile();
+        const text = await file.text();
+        return JSON.parse(text);
+    } catch (e) {
+        console.error('[fileSync] read failed', e);
+        return null;
+    }
+}
+
+async function _writeFileSync() {
+    if (!_fileSyncHandle) return;
+    try {
+        // Vérifier la permission
+        const perm = await _fileSyncHandle.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') {
+            const req = await _fileSyncHandle.requestPermission({ mode: 'readwrite' });
+            if (req !== 'granted') {
+                _setSyncStatus('error');
+                return;
+            }
+        }
+
+        // Vérifier que le fichier n'a pas été modifié externement entre-temps
+        const fileData = await _readFileSync();
+        if (fileData) {
+            const saved = storageLoad() || {};
+            const fileVersion = fileData.version || 0;
+            const localVersion = saved.version || 0;
+            if (fileVersion > localVersion) {
+                _showFileUpdateBanner(fileData);
+                _setSyncStatus('error');
+                return;
+            }
+        }
+
+        const saved = storageLoad() || {};
+        const payload = { ...saved, lastModified: Date.now() };
+        const writable = await _fileSyncHandle.createWritable();
+        await writable.write(JSON.stringify(payload, null, 2));
+        await writable.close();
+
+        // Mettre à jour lastExportedVersion
+        const s = storageLoad() || {};
+        storageSave({ ...s, lastExportedVersion: s.version || 0 });
+        _updateExportStatus();
+        _setSyncStatus('ok');
+    } catch (e) {
+        console.error('[fileSync] write failed', e);
+        _setSyncStatus('error');
+    }
+}
+
+function _scheduleFileSyncWrite() {
+    if (!_fileSyncHandle) return;
+    clearTimeout(_fileSyncWriteTimer);
+    _setSyncStatus('pending');
+    _fileSyncWriteTimer = setTimeout(() => _writeFileSync(), 1500);
+}
+
+// ── Détection de changements externes ───────────────────────────────────────────
+
+async function _checkFileSyncExternalUpdate() {
+    if (!_fileSyncHandle) return;
+    try {
+        const fileData = await _readFileSync();
+        if (!fileData) return;
+        const saved = storageLoad() || {};
+        const fileVersion = fileData.version || 0;
+        const localVersion = saved.version || 0;
+        if (fileVersion > localVersion) {
+            _showFileUpdateBanner(fileData);
+        }
+    } catch (e) {
+        console.error('[fileSync] check external failed', e);
+    }
+}
+
+function _showFileUpdateBanner(fileData) {
+    let banner = document.getElementById('fileUpdateBanner');
+    if (banner) return;
+    banner = document.createElement('div');
+    banner.id = 'fileUpdateBanner';
+    banner.className = 'cloud-update-banner';
+    banner.innerHTML =
+        '<span>🔄 Le fichier a été modifié depuis un autre appareil</span>' +
+        '<button class="btn-banner-apply" onclick="applyFileUpdate()">Appliquer</button>' +
+        '<button class="btn-banner-dismiss" onclick="_hideFileUpdateBanner()" title="Ignorer">✕</button>';
+    banner._remoteData = fileData;
+    const resultsSection = document.getElementById('resultsSection');
+    if (resultsSection) resultsSection.prepend(banner);
+}
+
+function _hideFileUpdateBanner() {
+    const banner = document.getElementById('fileUpdateBanner');
+    if (banner) banner.remove();
+}
+
+function applyFileUpdate() {
+    const banner = document.getElementById('fileUpdateBanner');
+    const data = banner && banner._remoteData;
+    if (!data) { _hideFileUpdateBanner(); return; }
+    storageSave(data);
+    _skipNextSync = true;
+    resumeSession();
+    _hideFileUpdateBanner();
+    _setSyncStatus('ok');
+    _updateExportStatus();
+}
+
+// ── Initialisation ──────────────────────────────────────────────────────────────
+
+async function _initFileSync() {
+    if (!window.showOpenFilePicker) return;
+    try {
+        const handle = await _loadFileHandleFromDB();
+        if (!handle) return;
+        _fileSyncHandle = handle;
+        try {
+            const file = await handle.getFile();
+            _fileSyncPath = file.name;
+        } catch (_) { _fileSyncPath = 'fichier lié'; }
+
+        // Vérifier s'il y a une mise à jour externe
+        await _checkFileSyncExternalUpdate();
+
+        _updateSyncUI();
+    } catch (e) {
+        console.error('[fileSync] init failed', e);
+    }
+}
+
+// ── Supabase (désactivé / masqué) ───────────────────────────────────────────────
+// Non utilisé. Laissé en commentaire pour référence uniquement.
+/*
 const SUPABASE_ENABLED = false;
-const SUPABASE_URL = 'https://cpbacjalatdzxozgkpln.supabase.co';      // ← REMPLACE ICI
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNwYmFjamFsYXRkenhvemdrcGxuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MjM5NzEsImV4cCI6MjA5NDA5OTk3MX0.2bH1nDHO7oPPn986ty5jg_JMUiQyOB_8nCGSaXF77dI';                       // ← REMPLACE ICI
+const SUPABASE_URL = '';
+const SUPABASE_ANON_KEY = '';
+*/
 
 let _syncTimer    = null;
 let _pollInterval = null;
@@ -330,29 +571,25 @@ function _setSyncStatus(state) {
 
 function _renderSyncBarInactive(container) {
     container.innerHTML =
-        '<span class="sync-label">Partager / Sync :</span>' +
+        '<span class="sync-label">Sauvegarde :</span>' +
+        '<span class="sync-local-hint" title="Les modifications sont enregistrées dans ce navigateur. Pour synchroniser avec un autre appareil, liez un fichier dans un dossier cloud.">💾 Mode local</span>' +
         '<button class="btn-share" onclick="copyShareLink()">🔗 Lien snapshot</button>' +
         '<label class="btn-export-json btn-import-results" title="Importer une sauvegarde JSON">↑ Importer<input type="file" accept=".json" hidden onchange="importJSON(event)"></label>' +
         '<button class="btn-export-json" onclick="exportJSON()">↓ Exporter</button>' +
-        '<button class="btn-cloud-setup" onclick="openSyncSetup()" title="Options de synchronisation avancées">☁ Cloud</button>' +
+        '<button class="btn-cloud-setup" onclick="openSyncSetup()" title="Lier un fichier JSON dans un dossier synchronisé (iCloud, Dropbox…)">📁 Lier un fichier</button>' +
         '<span class="export-status" id="exportStatusIndicator"></span>';
 }
 
-function _renderSyncBarActive(container, paused) {
-    const label = '☁ Synchronisé';
-    container.innerHTML = paused
-        ? '<span class="sync-status-text paused">✎ Mode local</span>' +
-          '<button class="btn-sync-action btn-sync-resume" onclick="resumeSync()" title="Reprendre la synchronisation cloud">☁ Rejoindre</button>' +
-          '<button class="btn-sync-action btn-sync-disconnect" onclick="disconnectSync()" title="Désactiver définitivement">✕ Déconnecter</button>' +
-          '<label class="btn-export-json btn-import-results" title="Importer une sauvegarde JSON">↑ Importer<input type="file" accept=".json" hidden onchange="importJSON(event)"></label>' +
-          '<button class="btn-export-json" onclick="exportJSON()">↓ Exporter</button>'
-        : '<span id="syncStatusText" class="sync-status-text ok">' + label + '</span>' +
-          '<button class="btn-cloud-link" onclick="copyCloudLink()">🔗 Copier le lien</button>' +
-          '<button class="btn-sync-action" onclick="refreshFromCloud()" title="Récupérer la version cloud">↻ Rafraîchir</button>' +
-          '<button class="btn-sync-action btn-sync-pause" onclick="pauseSync()" title="Travailler en local sans synchroniser">⏸ Mode local</button>' +
-          '<button class="btn-sync-action btn-sync-disconnect" onclick="disconnectSync()" title="Désactiver définitivement">✕ Déconnecter</button>' +
-          '<label class="btn-export-json btn-import-results" title="Importer une sauvegarde JSON">↑ Importer<input type="file" accept=".json" hidden onchange="importJSON(event)"></label>' +
-          '<button class="btn-export-json" onclick="exportJSON()">↓ Exporter</button>';
+function _renderSyncBarFileSync(container) {
+    const path = escapeHtml(_fileSyncPath || 'fichier lié');
+    container.innerHTML =
+        '<span class="sync-label">Sync fichier :</span>' +
+        '<span class="sync-file-name" title="Fichier synchronisé">📄 ' + path + '</span>' +
+        '<span id="syncStatusText" class="sync-status-text ok">☁ Synchronisé</span>' +
+        '<button class="btn-sync-action" onclick="_writeFileSync()" title="Forcer la sauvegarde immédiate">💾 Sauver maintenant</button>' +
+        '<button class="btn-sync-action btn-sync-disconnect" onclick="deactivateFileSync()" title="Désactiver la synchronisation fichier">✕ Désactiver</button>' +
+        '<label class="btn-export-json btn-import-results" title="Importer une sauvegarde JSON (remplace temporairement)">↑ Importer<input type="file" accept=".json" hidden onchange="importJSON(event)"></label>' +
+        '<button class="btn-export-json" onclick="exportJSON()">↓ Exporter</button>';
 }
 
 function _updateSyncUI() {
@@ -365,18 +602,17 @@ function _updateSyncUI() {
     if (sync && sync.provider && sync.provider !== 'supabase') {
         delete saved.sync;
         storageSave(saved);
-        container.innerHTML = '<span class="sync-status-text error">⚠ Ancienne synchro désactivée. Réactive-la ci-dessous.</span>' +
-            '<button class="btn-cloud-setup" onclick="openSyncSetup()">☁ Synchro cloud</button>' +
-            '<label class="btn-export-json btn-import-results" title="Importer une sauvegarde JSON">↑ Importer<input type="file" accept=".json" hidden onchange="importJSON(event)"></label>' +
-            '<button class="btn-export-json" onclick="exportJSON()">↓ Exporter</button>';
-        _stopPolling();
-        return;
     }
 
-    const paused = sync && sync.paused;
-    if (sync && sync.id && sync.provider === 'supabase') {
-        _renderSyncBarActive(container, paused);
-        paused ? _stopPolling() : _startPolling();
+    // Nettoyage ancienne sync Supabase
+    if (sync && sync.provider === 'supabase') {
+        delete saved.sync;
+        storageSave(saved);
+    }
+
+    if (_fileSyncHandle) {
+        _renderSyncBarFileSync(container);
+        _startPolling();
     } else {
         _renderSyncBarInactive(container);
         _stopPolling();
@@ -391,27 +627,31 @@ function _updateExportStatus() {
     const saved = storageLoad() || {};
     const version = saved.version || 0;
     const lastExported = saved.lastExportedVersion || 0;
-    if (version > lastExported) {
-        indicator.textContent = '● Modifié';
-        indicator.className = 'export-status export-status--dirty';
-        indicator.title = 'Version ' + version + ' (non exportée)';
+    if (_fileSyncHandle) {
+        if (version > lastExported) {
+            indicator.textContent = '● En cours…';
+            indicator.className = 'export-status export-status--dirty';
+            indicator.title = 'Sauvegarde automatique en cours…';
+        } else {
+            indicator.textContent = '✓ Fichier à jour';
+            indicator.className = 'export-status export-status--ok';
+            indicator.title = 'Version ' + version + ' synchronisée dans le fichier';
+        }
     } else {
-        indicator.textContent = '✓ À jour';
-        indicator.className = 'export-status export-status--ok';
-        indicator.title = 'Version ' + version;
+        if (version > lastExported) {
+            indicator.textContent = '● Non exporté';
+            indicator.className = 'export-status export-status--dirty';
+            indicator.title = 'Modifications enregistrées dans le navigateur. Cliquez sur Exporter pour créer un fichier.';
+        } else {
+            indicator.textContent = '✓ À jour';
+            indicator.className = 'export-status export-status--ok';
+            indicator.title = 'Version ' + version;
+        }
     }
 }
 
 function _scheduleSync() {
-    if (_skipNextSync) { _skipNextSync = false; return; }
-    const saved = storageLoad();
-    if (!saved || !saved.sync || !saved.sync.id || saved.sync.paused) return;
-    if (saved.sync.provider === 'supabase' && !SUPABASE_ENABLED) return;
-    clearTimeout(_syncTimer);
-    _setSyncStatus('pending');
-    _syncTimer = setTimeout(() => {
-        if (saved.sync.provider === 'supabase') _pushSync();
-    }, 2000);
+    _scheduleFileSyncWrite();
 }
 
 async function _pushSync() {
@@ -531,6 +771,10 @@ function _stopPolling() {
 }
 
 async function _pollCloud() {
+    if (_fileSyncHandle) {
+        await _checkFileSyncExternalUpdate();
+        return;
+    }
     const saved = storageLoad();
     if (!saved || !saved.sync || !saved.sync.id) { _stopPolling(); return; }
     try {
@@ -583,6 +827,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     migrateLegacySession();
     _populateUserSelect();
     _setupUserInput();
+    _initFileSync();
 
     const hash = location.hash.slice(1);
 

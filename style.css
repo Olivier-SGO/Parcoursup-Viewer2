@@ -988,3 +988,28 @@ button:not(.btn-secondary):not(.btn-export):not(.btn-danger):not(.filter-btn):ho
         padding: 0.625rem 0.75rem;
     }
 }
+
+/* ── File sync indicators ────────────────────────────── */
+
+.sync-file-name {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #166534;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 9999px;
+    padding: 0.15rem 0.6rem;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.sync-local-hint {
+    font-size: 0.8rem;
+    color: #64748b;
+    flex-shrink: 0;
+}

@@ -57,19 +57,10 @@
                     <div class="sync-setup__header">
                         <strong>Synchronisation par fichier</strong>
                         <span class="sync-setup__tag sync-setup__tag--green">Recommandé</span>
-                        <span class="sync-setup__desc">Exportez un fichier JSON, placez-le dans iCloud Drive / Dropbox / OneDrive et importez-le sur vos autres appareils.</span>
+                        <span class="sync-setup__desc">Liez un fichier JSON situé dans iCloud Drive, Dropbox, OneDrive, etc. Chaque modification sera automatiquement écrite dans ce fichier.</span>
                     </div>
-                    <p class="sync-setup__hint">Le fichier contient un numéro de version qui empêche d'écraser par mégarde une version plus récente.</p>
-                </div>
-                <hr style="margin:16px 0;border:0;border-top:1px solid #ddd;">
-                <div class="sync-setup__option">
-                    <div class="sync-setup__header">
-                        <strong>Supabase</strong>
-                        <span class="sync-setup__tag">Désactivé par défaut</span>
-                        <span class="sync-setup__desc">Nécessite un projet Supabase. Maintenu mais non recommandé (voir CLAUDE.md).</span>
-                    </div>
-                    <button class="btn-sync-activate btn-sync-supabase" onclick="activateSupabaseSync()">Activer la synchro Supabase</button>
-                    <p class="sync-setup__hint">Nécessite un projet Supabase (voir SUPABASE_SETUP.md)</p>
+                    <button class="btn-sync-activate" onclick="activateFileSync()">📁 Choisir un fichier</button>
+                    <p class="sync-setup__hint">Nécessite un navigateur compatible (Chrome, Edge, Safari macOS récent). Sur mobile, utilisez le mode local avec export/import manuel.</p>
                 </div>
             </div>
 
