@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "type": "http",
+      "url": "https://n8n.rames.be/mcp-server/http",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5NWE2YmNmYS0wZDJiLTRkNzctYjg4Yi02ZTJkNDY5ZDRjZjciLCJpc3MiOiJuOG4iLCJhdWQiOiJtY3Atc2VydmVyLWFwaSIsImp0aSI6ImYwYjViYzBmLWE4OWYtNGMzNS04MzNlLTQ2MjYwZjkzNzE0NCIsImlhdCI6MTc3Mzc0ODc1NH0.HmfqWprCPF6gLIyaqdR8Sgzhm_6QDxsbglAyDp2F4RA"
+      }
+    }
+  }
+}

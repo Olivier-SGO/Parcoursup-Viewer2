@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parcoursup Viewer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Parcoursup Viewer</h1>
+            <p class="subtitle">Visualisez et classez vos sous-vœux Parcoursup</p>
+            <div class="user-bar" id="userBar">
+                <span class="user-label">Utilisateur :</span>
+                <select class="user-select" id="userSelect" onchange="switchUser(this.value)"></select>
+                <input class="user-input" id="userInput" type="text" placeholder="Nouveau…" maxlength="20">
+                <button class="user-btn-add" onclick="createUserFromInput()" title="Ajouter un utilisateur">+</button>
+            </div>
+        </header>
+
+        <section class="input-section" id="inputSection">
+            <div class="resume-hint" id="resumeHint" hidden>
+                <span class="resume-hint__text">Session sauvegardée</span>
+                <button class="btn-resume" onclick="resumeSession()">Retrouver mes vœux →</button>
+            </div>
+            <label for="pasteArea">Collez le texte copié depuis votre page de vœux Parcoursup :</label>
+            <textarea
+                id="pasteArea"
+                placeholder="Sélectionnez tout le contenu de la page Parcoursup (Ctrl+A / Cmd+A) puis collez-le ici…"
+                rows="14"
+                spellcheck="false"
+            ></textarea>
+            <div class="input-actions">
+                <button id="analyzeBtn" onclick="analyze()">Analyser mes vœux</button>
+                <span class="input-sep">ou</span>
+                <label class="btn-import-label" for="importFile">↑ Importer une sauvegarde (.json)</label>
+                <input type="file" id="importFile" accept=".json" hidden onchange="importJSON(event)">
+            </div>
+        </section>
+
+        <section class="results-section" id="resultsSection" hidden>
+            <div class="results-header">
+                <h2>Vos sous-vœux</h2>
+                <div class="results-actions">
+                    <button class="btn-export" onclick="exportRanking()">Copier le classement</button>
+                    <button class="btn-secondary" onclick="importMore()">+ Importer d'autres vœux</button>
+                    <button class="btn-secondary" onclick="reset()">← Modifier le texte</button>
+                    <button class="btn-danger" onclick="clearAll()">Tout effacer</button>
+                </div>
+            </div>
+            <div class="sync-bar" id="syncBar">
+                <!-- Peuplé dynamiquement par _updateSyncUI() -->
+            </div>
+            <div class="sync-setup" id="syncSetup" hidden>
+                <div class="sync-setup__option">
+                    <div class="sync-setup__header">
+                        <strong>Synchronisation par fichier</strong>
+                        <span class="sync-setup__tag sync-setup__tag--green">Recommandé</span>
+                        <span class="sync-setup__desc">Exportez un fichier JSON, placez-le dans iCloud Drive / Dropbox / OneDrive et importez-le sur vos autres appareils.</span>
+                    </div>
+                    <p class="sync-setup__hint">Le fichier contient un numéro de version qui empêche d'écraser par mégarde une version plus récente.</p>
+                </div>
+                <hr style="margin:16px 0;border:0;border-top:1px solid #ddd;">
+                <div class="sync-setup__option">
+                    <div class="sync-setup__header">
+                        <strong>Supabase</strong>
+                        <span class="sync-setup__tag">Désactivé par défaut</span>
+                        <span class="sync-setup__desc">Nécessite un projet Supabase. Maintenu mais non recommandé (voir CLAUDE.md).</span>
+                    </div>
+                    <button class="btn-sync-activate btn-sync-supabase" onclick="activateSupabaseSync()">Activer la synchro Supabase</button>
+                    <p class="sync-setup__hint">Nécessite un projet Supabase (voir SUPABASE_SETUP.md)</p>
+                </div>
+            </div>
+
+            <div class="filter-bar">
+                <span class="filter-label">Statut :</span>
+                <button class="filter-btn active" data-filter="all"        onclick="applyFilter('all')">Tous</button>
+                <button class="filter-btn"         data-filter="confirmed"  onclick="applyFilter('confirmed')">✓ Confirmés</button>
+                <button class="filter-btn"         data-filter="incomplete" onclick="applyFilter('incomplete')">⚠ Incomplets</button>
+            </div>
+            <div class="filter-bar" id="typeFilterBar" hidden></div>
+
+            <div id="resultsContainer"></div>
+        </section>
+    </div>
+
+    <script src="parser.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
