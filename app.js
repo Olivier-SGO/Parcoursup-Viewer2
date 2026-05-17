@@ -570,13 +570,16 @@ function _setSyncStatus(state) {
 }
 
 function _renderSyncBarInactive(container) {
+    const canLink = !!window.showOpenFilePicker;
     container.innerHTML =
         '<span class="sync-label">Sauvegarde :</span>' +
         '<span class="sync-local-hint" title="Les modifications sont enregistrées dans ce navigateur. Pour synchroniser avec un autre appareil, liez un fichier dans un dossier cloud.">💾 Mode local</span>' +
         '<button class="btn-share" onclick="copyShareLink()">🔗 Lien snapshot</button>' +
         '<label class="btn-export-json btn-import-results" title="Importer une sauvegarde JSON">↑ Importer<input type="file" accept=".json" hidden onchange="importJSON(event)"></label>' +
         '<button class="btn-export-json" onclick="exportJSON()">↓ Exporter</button>' +
-        '<button class="btn-cloud-setup" onclick="openSyncSetup()" title="Lier un fichier JSON dans un dossier synchronisé (iCloud, Dropbox…)">📁 Lier un fichier</button>' +
+        (canLink
+            ? '<button class="btn-cloud-setup" onclick="openSyncSetup()" title="Lier un fichier JSON dans un dossier synchronisé (iCloud, Dropbox…)">📁 Lier un fichier</button>'
+            : '<span class="sync-local-hint" title="La synchronisation fichier automatique nécessite Chrome, Edge ou Safari macOS récent. Sur ce navigateur, utilisez Exporter / Importer manuellement.">📵 Sync fichier indisponible</span>') +
         '<span class="export-status" id="exportStatusIndicator"></span>';
 }
 
@@ -673,6 +676,21 @@ async function _pushSync() {
 function openSyncSetup() {
     const setup = document.getElementById('syncSetup');
     if (!setup) return;
+    if (setup.hidden) {
+        const canLink = !!window.showOpenFilePicker;
+        const btn = setup.querySelector('.btn-sync-activate');
+        const hint = setup.querySelector('.sync-setup__hint');
+        if (btn) {
+            btn.disabled = !canLink;
+            btn.style.opacity = canLink ? '1' : '0.5';
+            btn.style.cursor = canLink ? 'pointer' : 'not-allowed';
+        }
+        if (hint) {
+            hint.textContent = canLink
+                ? 'Nécessite un navigateur compatible (Chrome, Edge, Safari macOS récent). Sur mobile, utilisez le mode local avec export/import manuel.'
+                : 'Ce navigateur ne supporte pas la liaison de fichier automatique. Utilisez Chrome, Edge ou Safari macOS récent. Sur ce navigateur, restez en mode local avec Exporter / Importer.';
+        }
+    }
     setup.hidden = !setup.hidden;
 }
 
