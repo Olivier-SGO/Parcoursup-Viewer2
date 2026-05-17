@@ -313,7 +313,12 @@ async function _removeFileHandleFromDB() {
 
 async function activateFileSync() {
     if (!window.showOpenFilePicker) {
-        alert('La sélection de fichier automatique n\'est pas supportée par ce navigateur. Utilisez Chrome, Edge ou Safari macOS récent, ou restez en mode local avec export/import manuel.');
+        const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+        if (isSafari) {
+            alert('Safari ne supporte pas la liaison de fichier automatique, même sur macOS.\n\nUtilisez Chrome ou Edge pour cette fonctionnalité, ou restez en mode local avec Exporter / Importer.');
+        } else {
+            alert('La sélection de fichier automatique n\'est pas supportée par ce navigateur. Utilisez Chrome ou Edge, ou restez en mode local avec export/import manuel.');
+        }
         return;
     }
     try {
@@ -571,6 +576,7 @@ function _setSyncStatus(state) {
 
 function _renderSyncBarInactive(container) {
     const canLink = !!window.showOpenFilePicker;
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
     container.innerHTML =
         '<span class="sync-label">Sauvegarde :</span>' +
         '<span class="sync-local-hint" title="Les modifications sont enregistrées dans ce navigateur. Pour synchroniser avec un autre appareil, liez un fichier dans un dossier cloud.">💾 Mode local</span>' +
@@ -579,7 +585,9 @@ function _renderSyncBarInactive(container) {
         '<button class="btn-export-json" onclick="exportJSON()">↓ Exporter</button>' +
         (canLink
             ? '<button class="btn-cloud-setup" onclick="openSyncSetup()" title="Lier un fichier JSON dans un dossier synchronisé (iCloud, Dropbox…)">📁 Lier un fichier</button>'
-            : '<span class="sync-local-hint" title="La synchronisation fichier automatique nécessite Chrome, Edge ou Safari macOS récent. Sur ce navigateur, utilisez Exporter / Importer manuellement.">📵 Sync fichier indisponible</span>') +
+            : '<span class="sync-local-hint" title="' + (isSafari
+                ? 'Safari ne supporte pas la liaison de fichier. Utilisez Chrome ou Edge sur Mac.'
+                : 'La synchronisation fichier automatique nécessite Chrome ou Edge. Sur ce navigateur, utilisez Exporter / Importer manuellement.') + '">' + (isSafari ? '🛑 Safari non supporté' : '📵 Sync fichier indisponible') + '</span>') +
         '<span class="export-status" id="exportStatusIndicator"></span>';
 }
 
